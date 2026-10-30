@@ -1,0 +1,8 @@
+{
+  "source_repository": "Delta-Trigger-Inc/aegis-edge-client",
+  "source_revision": "041b46d727e6c6396870548a5fe0eba929ad63c3",
+  "source_path": "packages/edge_proxy/egress_runtime.py",
+  "source_sha256": "f40df36d6a32c0037285769e672edeaf3fb89e0754bd6e9ce06dd9ee5e02e51a",
+  "extraction": "Named native TCP forwarding functions and NativeProxy class; bodies unchanged",
+  "readiness": "reference-preview; not production-certified"
+}

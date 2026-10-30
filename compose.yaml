@@ -1,0 +1,25 @@
+services:
+  proxy:
+    image: aegis-edge-proxy:0.1.0-preview.1
+    build: .
+    pull_policy: never
+    network_mode: host
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: "1.0"
+    restart: unless-stopped
+    stop_grace_period: 15s
+    volumes:
+      - type: bind
+        source: ${AEGIS_PROXY_BUNDLE:?Set absolute path to the private proxy bundle}
+        target: /run/aegis-proxy
+        read_only: true
+    tmpfs:
+      - /run/aegis-health:size=1m,mode=1777,noexec,nosuid
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
