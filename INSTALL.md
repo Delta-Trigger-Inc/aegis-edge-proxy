@@ -1,137 +1,141 @@
-# Controlled-test installation
+# Production installation
 
-Requirements: Linux Docker Engine and Docker Compose v2+, a locally assigned
-source IPv4 address, NTP synchronization, and an operator-controlled test receiver
-accepting TCP 25. Do not install on the Cloud host. Multiple source IPs on one host
-use separate projects and separate bundles; each listener binds its own source IP.
-Do not add an IP that the provider has not assigned to that host.
+Use a maintained Linux host (Ubuntu 24.04 LTS or later is recommended), synchronized
+clock, an assigned public source IP, outbound TCP 25, and Docker Engine with Compose
+v2+. Follow [Docker's supported OS/install instructions](https://docs.docker.com/engine/install/ubuntu/).
+Do not install this on the Cloud host. Multiple sending IPs use separate projects,
+bundles and listeners. Never add an unassigned IP or enable freebind.
 
-## 1. Build the downloaded release
+## 1. Download and pin the image
 
-Install Docker using https://docs.docker.com/engine/install/ for the host OS.
-From the extracted release directory:
+Download the source archive, SHA256SUMS, RELEASE.json, and the image archive for
+`uname -m` (x86_64 → amd64; aarch64 → arm64) from the
+[1.0.0 release](https://github.com/Delta-Trigger-Inc/aegis-edge-proxy/releases/tag/v1.0.0).
+The release contains no private configuration. On Linux, in that download directory:
 
 ```sh
-docker build --pull -t aegis-edge-proxy:0.1.0-preview.1 .
-docker run --rm aegis-edge-proxy:0.1.0-preview.1 --help
+sha256sum --ignore-missing -c SHA256SUMS
+docker load --input aegis-edge-proxy-1.0.0-linux-amd64.tar.gz
+tar -xzf aegis-edge-proxy-1.0.0.tar.gz
+cd aegis-edge-proxy-1.0.0
 ```
 
-This package uses Linux host networking so the outbound socket can bind the actual
-assigned source IP. There are no Compose port publications. See
-https://docs.docker.com/engine/network/drivers/host/ . The runtime is UID/GID 10001,
-read-only, has no Linux capabilities and has bounded memory, tasks and rotated logs.
+Use the corresponding arm64 filename when appropriate. Compare the loaded image's
+ID, architecture, user and revision with RELEASE.json, then set `AEGIS_PROXY_IMAGE`
+to that exact `sha256:...` image ID. Compose uses `pull_policy: never`.
 
-## 2. Create a private pair on the trusted Edge/operator host
+```sh
+docker image inspect aegis-edge-proxy:1.0.0-amd64
+export AEGIS_PROXY_IMAGE=sha256:REPLACE_WITH_VERIFIED_IMAGE_ID
+```
 
-Build the same image on the trusted host. Choose explicit unique IDs and use the
-actual enrolled Edge agent ID, not a tenant name. Replace the example addresses;
-192.0.2.10 and 198.51.100.20 below are documentation addresses, not working targets.
+Alternatively build the checked source with `docker build --build-arg
+SOURCE_REVISION=RELEASE_COMMIT -t aegis-edge-proxy:1.0.0 .` and pin its actual local
+image ID. A locally rebuilt image need not have the prebuilt archive's image ID.
+
+## 2. Generate private credentials on the trusted Edge/operator host
+
+Load the release image there too. Set these variables to your actual enrolled
+agent, unique endpoint/proxy IDs, Edge public outbound IP, assigned proxy IP and
+TLS name. The TLS name may match the sender EHLO but serves a separate purpose.
 
 ```sh
 umask 077
 mkdir -p "$HOME/aegis-proxy-private"
-docker run --rm --user "$(id -u):$(id -g)" --entrypoint python \
-  -v "$HOME/aegis-proxy-private:/private" \
-  aegis-edge-proxy:0.1.0-preview.1 /app/create_pair.py \
-  --edge-id YOUR_ENROLLED_AGENT_ID --proxy-id proxy-example \
-  --endpoint-id endpoint-example --source-ip 192.0.2.10 \
-  --server-name mail.example.com --allowed-destination-cidr 198.51.100.20/32 \
-  --output /private/endpoint-example
+docker run --rm --network none --user "$(id -u):$(id -g)" \
+  --entrypoint /usr/bin/python3 -v "$HOME/aegis-proxy-private:/private" \
+  "$AEGIS_PROXY_IMAGE" /app/create_pair.py \
+  --edge-id "$EDGE_AGENT_ID" --proxy-id "$PROXY_ID" --endpoint-id "$ENDPOINT_ID" \
+  --source-ip "$SOURCE_IP" --edge-peer-cidr "$EDGE_PUBLIC_IP/32" \
+  --server-name "$TLS_NAME" --allowed-destination-cidr 0.0.0.0/0 \
+  --output "/private/$ENDPOINT_ID"
 ```
 
-The helper refuses to overwrite an existing output directory and creates private
-files with mode 600. Keep `ca/`, `edge/` and `metadata.json` on the trusted host.
-Transfer **only `proxy/`** over authenticated SSH to its corresponding source-IP
-host, e.g. to `/opt/aegis-proxy/endpoint-example/proxy`. Never put a private bundle
-in GitHub, a public download, an image layer or chat. The CA is private to this
-pair and is unrelated to Cloud enrollment or public ACME certificates.
+The production policy still rejects non-global/self destinations even with
+0.0.0.0/0. Use narrower public destination CIDRs if required. IPv6-only deployments
+need matching IPv6 source, peer and destination CIDRs; the released Edge/Postfix
+companion topology is IPv4, so IPv6 is not part of its integration certification.
 
-## 3. Restrict the host and prepare custody
+Keep the entire original bundle on the trusted operator host for renewal. Transfer
+only `proxy/` to `/opt/aegis-proxy/ENDPOINT/proxy` on the assigned proxy host over
+an authenticated connection. Never put bundles in GitHub or image layers. CA and
+Edge private keys must not be installed on the proxy. The helper refuses overwrite.
 
-Check `ip -4 addr`, `ss -lnt`, provider firewall and host firewall. The source IP
-must already be on an interface, port 5443 on that IP must be free, and the provider
-must allow outbound TCP 25 to the approved test receiver. Do not enable freebind.
+## 3. Host restrictions and credential custody
 
-In the provider firewall allow inbound TCP 5443 only from the actual Edge outbound
-IP /32 and deny that port from other sources. Keep your existing administrative SSH
-rule. Apply the equivalent host rule. On a host where UFW is already enabled with
-an incoming-deny policy, an example allow rule is:
+Verify the source IP in `ip -4 addr`, port 5443 availability in `ss -lnt`, outbound
+TCP 25 and NTP. In provider and host firewalls, allow inbound TCP 5443 only from
+the Edge public IP and deny all other sources. Preserve SSH access. An allow rule
+alone is not a deny policy; audit broad existing rules before changing anything.
+The Compose service uses Linux [host networking](https://docs.docker.com/engine/network/drivers/host/)
+so it can bind the actual source IP. No Docker port publication is used. Host INPUT
+rules therefore protect its listener. It does not listen for inbound SMTP on 25.
 
 ```sh
-sudo ufw allow from EDGE_IP to SOURCE_IP port 5443 proto tcp
-sudo ufw status verbose
+sudo chown -R root:10001 /opt/aegis-proxy/ENDPOINT/proxy
+sudo find /opt/aegis-proxy/ENDPOINT/proxy -type d -exec chmod 750 {} +
+sudo find /opt/aegis-proxy/ENDPOINT/proxy -type f -exec chmod 640 {} +
+export AEGIS_PROXY_BUNDLE=/opt/aegis-proxy/ENDPOINT/proxy
 ```
 
-An allow rule alone does not create a deny policy. Audit existing broad rules; do
-not reset a firewall or enable UFW blindly over SSH. The service does not listen
-for inbound SMTP on port 25. Existing mail services are separate; stop/remove them
-only after confirming host ownership and the desired cutover.
-
-Set custody after copying the private `proxy/` directory:
-
-```sh
-sudo chown -R root:10001 /opt/aegis-proxy/endpoint-example/proxy
-sudo find /opt/aegis-proxy/endpoint-example/proxy -type d -exec chmod 750 {} +
-sudo find /opt/aegis-proxy/endpoint-example/proxy -type f -exec chmod 640 {} +
-export AEGIS_PROXY_BUNDLE=/opt/aegis-proxy/endpoint-example/proxy
-```
+Store the two environment values in a root-readable deployment file or supply
+them consistently on every command. Do not place secret PEM contents in environment
+variables. The service runs as UID/GID 10001 with no capabilities.
 
 ## 4. Validate and start
 
-From the release directory, keep the same project and bundle path on each command:
-
 ```sh
-docker compose -p endpoint-example config --quiet
-docker compose -p endpoint-example run --rm --no-deps proxy --config /run/aegis-proxy/config.json --check
-docker compose -p endpoint-example up -d --no-build
-docker compose -p endpoint-example logs --tail 30 proxy
-docker compose -p endpoint-example exec proxy cat /run/aegis-health/health.json
+docker compose -p ENDPOINT config --quiet
+docker compose -p ENDPOINT run --rm --no-deps proxy --check
+docker compose -p ENDPOINT up -d
+docker compose -p ENDPOINT exec -T proxy /usr/bin/python3 /app/proxy.py --health
+docker compose -p ENDPOINT logs --tail 30 proxy
 ```
 
-`proxy_ready`/the health file show process state, not an authenticated route check.
-From the trusted Edge/operator host run a connection-only probe. The chosen source
-network must be allowed by the proxy firewall:
+The runtime contains no shell or `cat`. To inspect health:
 
 ```sh
-docker run --rm --network host --user "$(id -u):$(id -g)" --entrypoint python \
-  -v "$HOME/aegis-proxy-private:/private:ro" \
-  aegis-edge-proxy:0.1.0-preview.1 /app/probe.py \
-  --bundle /private/endpoint-example --destination 198.51.100.20
+docker compose -p ENDPOINT exec -T proxy /usr/bin/python3 -c \
+  'from pathlib import Path; print(Path("/run/aegis-health/health.json").read_text())'
 ```
 
-Expect a signed `accepted` / `connection_admitted` response. Independently inspect
-the controlled receiver: the observed source must equal the intended sending IP.
-The probe sends no SMTP commands or message. A Mac behind a different public IP
-will be blocked if only the real Edge is allowed; run the probe from Edge.
+From Edge (the firewall-authorized source), test an approved receiver's resolved
+public MX IP without sending a message:
 
-Drain refuses new admissions while current tunnels finish:
-`docker compose -p endpoint-example kill -s SIGUSR1 proxy`.
-Halt closes existing tunnels:
-`docker compose -p endpoint-example kill -s SIGUSR2 proxy`.
-Resume with SIGHUP; stop with `docker compose -p endpoint-example down`.
+```sh
+docker run --rm --network host --user "$(id -u):$(id -g)" \
+  --entrypoint /usr/bin/python3 -v "$HOME/aegis-proxy-private:/private:ro" \
+  "$AEGIS_PROXY_IMAGE" /app/probe.py --bundle "/private/$ENDPOINT_ID" \
+  --destination "$APPROVED_MX_IP"
+```
 
-## 5. Connect the Edge side and commission mail separately
+Expect a signed accepted response. Verify the intended source IP independently
+at a controlled receiver. Check that unauthorized peers cannot access 5443.
 
-The supplied `edge/security-profile.json` has the native `aegis_proxy_v1` credential
-file fields. Mount `edge/` under its indicated private `/run/aegis-egress/ENDPOINT`
-path in the Edge Postfix companion; keep keys readable only by its connector UID
-10002. Register matching endpoint/proxy IDs, source IP, port 5443, configuration
-version 1 and TLS server name. The profile includes its distinct proxy_id; preserve both IDs exactly.
-The profile is an input to AEGIS's registry/export workflow, not a complete registry
-or a file that can simply be dropped into the Edge data directory. The native
-Postfix and policy companions, private topology, routing bindings and readback must
-be installed through that workflow before campaign sending can function.
+## 5. Register the Edge transport and commission the sender
 
-EHLO, DKIM signing, return paths and retry queues belong to Edge/Postfix, not this
-proxy. Create `mail.DOMAIN` A -> source IP and provider PTR source IP -> that same
-hostname. Verify both directions and use that hostname for the Edge sender EHLO.
-SPF must authorize the actual return-path domain's source IP; merge with an existing
-SPF record, never add a second one. Generate a new DKIM key in Edge and publish its
-actual public key; do not use a placeholder TXT value. Preserve existing MX/SPF/
-DMARC until their existing mail uses are checked. A test connection does not verify
-SPF, DKIM, DMARC, bounce receiving or unsubscribe processing. See sender requirements:
-https://support.google.com/a/answer/81126?hl=en .
+Use the installed Edge endpoint staging API, NativeConfiguration service and
+native-delivery exporter. Do not hand-edit the encrypted database or create a
+parallel SMTP submission listener. The endpoint ID, agent ID, proxy ID, source IP,
+port 5443, configuration version and TLS server name must match the bundle exactly.
+The `edge/security-profile.json` file is an exporter input, not a complete registry.
+Register backend `aegis_proxy_v1`, the profile's digest, and the private route binding.
 
-Keep sending disabled until production hardening, the complete Edge route, DNS,
-receiving, unsubscribe and an authorized test delivery are verified. This preview
-alone does not complete those steps.
+Copy `edge/` to the Postfix companion's indicated `/run/aegis-egress/ENDPOINT`
+location, readable only by connector UID/GID 10002. Mount it read-only. Install
+matching Edge and Postfix builds with the hardened connector, the per-attempt
+policy service, and the protected local DSN receiving companion. Preserve the
+existing Edge data/master key and persistent Postfix queue during upgrades.
+
+Configure `egress.DOMAIN` A → assigned source IP and provider PTR → the same name;
+use that name for EHLO. Merge the source IP into the return-path domain's existing
+single SPF record. Reuse an existing suitable DKIM key through Edge's verified
+local import, or generate a new Edge key and publish its actual TXT value. A proxy
+migration alone does not require replacing DKIM DNS. Verify aligned From/SPF/DKIM,
+DMARC, return-path receiving, and public unsubscribe behavior before sending.
+Preserve existing mailbox MX unless explicitly migrating it. See
+[Gmail's sender requirements](https://support.google.com/mail/answer/81126?hl=en).
+
+Finally create an explicitly authorized test audience, approve its ordinary Cloud
+campaign, and verify delivery and receiving evidence through the actual chain.
+A connection-only probe or this software release cannot certify all those settings.

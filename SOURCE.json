@@ -1,8 +1,12 @@
 {
-  "source_repository": "Delta-Trigger-Inc/aegis-edge-client",
-  "source_revision": "041b46d727e6c6396870548a5fe0eba929ad63c3",
-  "source_path": "packages/edge_proxy/egress_runtime.py",
-  "source_sha256": "f40df36d6a32c0037285769e672edeaf3fb89e0754bd6e9ce06dd9ee5e02e51a",
-  "extraction": "Named native TCP forwarding functions and NativeProxy class; bodies unchanged",
-  "readiness": "reference-preview; not production-certified"
+  "protocol": "aegis-egress-v1",
+  "protocol_origin": {
+    "repository": "Delta-Trigger-Inc/aegis-edge-client",
+    "revision": "041b46d727e6c6396870548a5fe0eba929ad63c3",
+    "path": "packages/edge_proxy/egress_runtime.py"
+  },
+  "implementation": "Hardened standalone server with bounded single-owner TLS streaming, strict policy, certificate pins, revocation and renewal. Legacy reference NativeProxy server removed.",
+  "release": "1.0.0",
+  "deployment_validation": "See TEST-RESULTS.json; every sender requires separate DNS, receiving, unsubscribe and authorized delivery commissioning.",
+  "compatible_edge_revision": "e60bfde854dc738bc9069903f2486ed5c0cae519"
 }
