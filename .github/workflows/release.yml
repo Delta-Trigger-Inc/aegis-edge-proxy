@@ -1,0 +1,99 @@
+name: Publish verified release archives
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing immutable release tag
+        required: true
+        default: v1.0.0
+permissions:
+  contents: read
+jobs:
+  image:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - name: Build and verify immutable tagged source
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -eu
+          test "v$(cat VERSION)" = "$RELEASE_TAG"
+          python3 -c 'import os,re; assert re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+",os.environ["RELEASE_TAG"])'
+          IMAGE="aegis-edge-proxy:${RELEASE_TAG#v}-$ARCH"
+          docker build --provenance=false --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -t "$IMAGE" .
+          docker run --rm --network none --entrypoint /usr/bin/python3 -v "$PWD/tests:/tests:ro" "$IMAGE" /tests/integration.py
+          docker run --rm --network none --entrypoint /usr/bin/python3 -v "$PWD/tests:/tests:ro" "$IMAGE" /tests/runtime_security.py
+          mkdir artifacts
+          docker save "$IMAGE" | gzip -n > "artifacts/aegis-edge-proxy-${RELEASE_TAG#v}-linux-$ARCH.tar.gz"
+          docker image inspect "$IMAGE" > "artifacts/image-$ARCH.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: image-${{ matrix.arch }}
+          path: artifacts/*
+          retention-days: 3
+  publish:
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: image-*
+          path: artifacts
+          merge-multiple: true
+      - name: Package checksums and publish
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          VERSION="${RELEASE_TAG#v}"
+          git archive --format=tar.gz --prefix="aegis-edge-proxy-$VERSION/" -o "artifacts/aegis-edge-proxy-$VERSION.tar.gz" HEAD
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          root=Path('artifacts'); version=os.environ['RELEASE_TAG'][1:]
+          revision=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          value={'version':version,'source_revision':revision,'images':{},'source_archive':f'aegis-edge-proxy-{version}.tar.gz'}
+          for arch in ['amd64','arm64']:
+              p=root/f'image-{arch}.json'; info=json.loads(p.read_text())[0]
+              assert info['Architecture']==arch and info['Config']['User']=='10001:10001'
+              assert info['Config']['Labels']['org.opencontainers.image.revision']==revision
+              value['images'][arch]={'tag':f'aegis-edge-proxy:{version}-{arch}','id':info['Id'],'runtime_user':'10001:10001','source_revision':revision,'archive':f'aegis-edge-proxy-{version}-linux-{arch}.tar.gz','runtime_tests':'passed'}
+              p.unlink()
+          (root/'RELEASE.json').write_text(json.dumps(value,indent=2)+'\n')
+          (root/'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in sorted(root.iterdir()) if p.is_file()))
+          PY
+          cat > /tmp/release-notes.txt <<'NOTES'
+          Hardened authenticated SMTP egress: TLS 1.3/mTLS, certificate pins, signed channel-bound admissions, bounded resources, fail-closed reload, revocation and staged renewal. Includes tested Linux amd64 and arm64 images.
+
+          Installed Edge/Postfix/receiving tests passed for DKIM/STARTTLS delivery, proxy-outage queue retention without direct fallback, lease revocation, and queue recovery after restart. Requires the hardened Edge connector at e60bfde854dc738bc9069903f2486ed5c0cae519 or later containing these changes (Edge PR #16).
+
+          Verify downloads against SHA256SUMS and image identities against RELEASE.json. Read INSTALL.md and OPERATIONS.md. Each live sender still needs its own DNS, signing identity, receiving/unsubscribe verification and approved delivery test; this release does not claim public inbox delivery.
+          NOTES
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" artifacts/* --clobber
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest --notes-file /tmp/release-notes.txt
+          else
+            gh release create "$RELEASE_TAG" artifacts/* --verify-tag --latest --title "AEGIS Edge Proxy $VERSION" --notes-file /tmp/release-notes.txt
+          fi
