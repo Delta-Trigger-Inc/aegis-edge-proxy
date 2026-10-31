@@ -55,5 +55,20 @@
     "Each deployment requires independent sending identity, DNS, receiving and unsubscribe validation.",
     "No public inbox delivery claim is made by these tests.",
     "Backend integration is IPv4 linux/amd64; runtime architecture results are in release assets."
-  ]
+  ],
+  "controlled_live_campaign": {
+    "observed_at": "2026-10-31T02:22:10Z",
+    "workflow": "ordinary_authenticated_customer_campaign",
+    "recipients": 1,
+    "smtp_attempts": 1,
+    "retry_attempts": 0,
+    "smtp_accepted": 0,
+    "bounced": 1,
+    "queued": 0,
+    "gmail_result": "550 5.7.1 sending domain reputation rejection",
+    "actual_message_dkim_verified_against_existing_dns": true,
+    "signed_cloud_outcome_reconciled": true,
+    "production_inbox_delivery_certified": false,
+    "details": "LIVE-COMMISSIONING.md"
+  }
 }
