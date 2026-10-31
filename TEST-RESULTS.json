@@ -70,5 +70,20 @@
     "signed_cloud_outcome_reconciled": true,
     "production_inbox_delivery_certified": false,
     "details": "LIVE-COMMISSIONING.md"
+  },
+  "multi_sender_campaign": {
+    "status": "isolated_tests_passed",
+    "cloud_revision": "68564b226f7826e6890c9af8bbdc2c456d9fb610",
+    "edge_revision": "6268eb1ddb1e8904d3fac238339b53004d27d12a",
+    "checks": [
+      "one campaign, two registered egress IPs and two DKIM domains",
+      "actual DKIM verification of both rendered messages",
+      "signed per-endpoint sender planning, projection and readiness",
+      "replay does not create duplicate recipients",
+      "altered sender bindings rejected",
+      "sender removal blocks subsequent attempts"
+    ],
+    "live_multi_host_delivery_verified": false,
+    "proxy_release_artifacts_changed": false
   }
 }
