@@ -1,0 +1,26 @@
+services:
+  inbound:
+    image: ${AEGIS_INBOUND_IMAGE:?Set verified local image ID}
+    pull_policy: never
+    restart: unless-stopped
+    stop_grace_period: 60s
+    network_mode: host
+    pids_limit: 128
+    mem_limit: 192m
+    cpus: "0.5"
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - type: bind
+        source: ${AEGIS_INBOUND_CONFIG:?Set absolute config file path}
+        target: /run/aegis-inbound/config.json
+        read_only: true
+      - inbound-queue:/var/spool/postfix
+      - inbound-data:/var/lib/postfix
+      - inbound-srs:/var/lib/postsrsd
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+volumes:
+  inbound-queue:
+  inbound-data:
+  inbound-srs:
