@@ -124,11 +124,30 @@ def check_health():
         pass
 
 
+def disable_postfix_chroot(run_cmd=subprocess.run):
+    # Container isolation replaces Postfix's legacy chroot so smtp(8) reads the
+    # live /etc/resolv.conf and TLS CA bundle even with a persistent queue volume.
+    run_cmd(["postconf", "-F", "*/*/chroot=n"], check=True)
+    output = run_cmd(
+        ["postconf", "-F", "*/*/chroot"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    entries = [line.strip() for line in output.splitlines() if line.strip()]
+    if not any(line.startswith("smtp/unix/chroot") for line in entries):
+        raise RuntimeError("postfix master.cf missing smtp/unix entry")
+    chrooted = [line for line in entries if line.split("=", 1)[-1].strip() != "n"]
+    if chrooted:
+        raise RuntimeError(f"postfix chroot still enabled: {', '.join(chrooted)}")
+
+
 def run():
     value = json.loads(Path("/run/aegis-inbound/config.json").read_text())
     main, aliases = configuration(value)
     root = Path("/etc/postfix")
     (root / "main.cf").write_text("".join(f"{key} = {v}\n" for key, v in main.items()))
+    disable_postfix_chroot()
     (root / "aegis_aliases").write_text(aliases)
     subprocess.run(["postmap", str(root / "aegis_aliases")], check=True)
     key = Path("/var/lib/postfix/inbound-key.pem")

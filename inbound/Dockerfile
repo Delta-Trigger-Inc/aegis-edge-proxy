@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim
 ARG AEGIS_INBOUND_REVISION=unknown
 LABEL org.opencontainers.image.title="AEGIS inbound domain receiver" \
-      org.opencontainers.image.version="0.1.0-inbound.1" \
+      org.opencontainers.image.version="0.1.0-inbound.2" \
       org.opencontainers.image.revision="${AEGIS_INBOUND_REVISION}"
 RUN printf 'postfix postfix/main_mailer_type string No configuration\n' | debconf-set-selections \
     && apt-get update && apt-get install -y --no-install-recommends postfix postsrsd python3 ca-certificates openssl \
