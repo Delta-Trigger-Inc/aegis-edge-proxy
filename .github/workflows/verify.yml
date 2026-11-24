@@ -19,10 +19,14 @@ jobs:
         run: |
           python3 -m venv /tmp/proxy-tests
           /tmp/proxy-tests/bin/pip install -r requirements.txt pytest==9.1.1
-          /tmp/proxy-tests/bin/python -m pytest -q
+          /tmp/proxy-tests/bin/python -m pytest -q tests inbound/tests
       - name: Build pinned runtime
         run: docker build --build-arg SOURCE_REVISION="$GITHUB_SHA" -t aegis-proxy:test .
       - name: Real TLS and lifecycle tests without external network
         run: |
           docker run --rm --network none --entrypoint /usr/bin/python3 -v "$PWD/tests:/tests:ro" aegis-proxy:test /tests/integration.py
           docker run --rm --network none --entrypoint /usr/bin/python3 -v "$PWD/tests:/tests:ro" aegis-proxy:test /tests/runtime_security.py
+      - name: Build and verify inbound receiver runtime without external network
+        run: |
+          docker build --build-arg AEGIS_INBOUND_REVISION="$GITHUB_SHA" -f inbound/Dockerfile -t aegis-inbound:test .
+          python3 inbound/tests/container_verify.py aegis-inbound:test
